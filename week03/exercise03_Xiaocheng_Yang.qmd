@@ -1,0 +1,308 @@
+---
+title: "Exercise 03"
+author: "Xiaocheng Yang(YXC33)"
+date: "02 10 2023"
+format:
+    pdf:
+      toc: true
+      self-contained: true
+      highlight-style: github
+      code-line-numbers: true
+editor_options: 
+    chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Exploratory Data Analysis
+
+Do an exploratory data analysis of a matrix of expression values. The data consists of expression values for samples that were treated with DMSO and TSA. The samples were measured using three technologies: bulk, IFC96, IFC800. See the two RDS files `counts.RDS` and `phenodata.RDS`.
+
+The experiment has two experimental factors "Treatment" and "Technology". Treatment has two levels, Technology has three levels. Samples that have the same combination of Treatment & Technology are replicates.
+
+## Data Import
+
+```{r }
+x = readRDS("counts.RDS")
+anno = readRDS("phenodata.RDS")
+head(anno)
+
+```
+
+## Compute and visualize basic statistics on the experimental design
+
+How many replicates are there for each combination of factor levels? How many genes have an expression value above 0 in each sample? Are there systematic differences between the samples in the different conditions (treatment & technology). Visualize the following statistics per sample:
+
+### How many replicates are there for each combination of factor levels?
+
+```{r}
+table(anno)
+
+```
+
+So, for (DMSO,bulk) combination, we have 3 replicas; for(DMSO,IFC800), we have 20 replicas; for (DMSO,IFC96), we have 20 replicas; for (TSA, bulk), we have 3 replicas; for(TSA,IFC800), we have 20 replicas; for(TSA, IFC96) we have 20 replicas.
+
+### How many genes have an expression value above 0 in each sample?
+
+```{r}
+bigger_0 <- apply(x, MARGIN = 2, FUN = function(col) sum(col>0))
+print(bigger_0)
+```
+
+Here is the table that shows how many genes are expressed in every sample.
+
+### number of detected genes
+
+```{r}
+bigger_0 <- apply(x, MARGIN = 2, FUN = function(col) sum(col>0))
+print(bigger_0)
+```
+
+This table is the number of detected genes per sample.
+
+### Are there systematic differences between the samples in the different conditions
+
+For now, it's really hard to say, because we have not normalized data.
+
+### total sum of counts per sample (serves as a proxy for the number of sequenced reads per sample)
+
+```{r}
+sum_counts_sample <- apply(x, MARGIN = 2, FUN = function(col) sum(col))
+print(sum_counts_sample)
+```
+
+This table shows the total sum of counts per sample.
+
+```{r}
+library("ggplot2")
+dataframe_sum_of_counts <- data.frame(value = sum_counts_sample, index = names(sum_counts_sample))
+
+ggplot(dataframe_sum_of_counts, aes(x=factor(index), y = value))+ 
+    geom_bar(stat="identity")+ 
+    labs(title = "Total sum of counts per sample", x="Sample", y="Counts")
+```
+
+We find that the total counts of different sample vary a lot. Find that sample names overlaoed on x-axis.
+
+```{r}
+ggplot(dataframe_sum_of_counts, aes(x=factor(index), y=value)) + 
+    geom_bar(stat="identity", fill="steelblue") + 
+    labs(title="Total sum of counts per sample", x="Sample", y="Counts") +
+    theme_minimal() + 
+    theme(axis.text.x = element_text(size=4.5, angle = 45, hjust = 1, vjust = 1),
+          plot.title = element_text(face="bold", size=14),
+          axis.title.x = element_text(size=12, face="bold"),
+          axis.title.y = element_text(size=12, face="bold"))
+```
+
+From this table, we can find that different sample counts vary a lot.
+
+### Color the samples by the experimental condition.
+
+```{r}
+library(dplyr)
+anno$sample_name <- rownames(anno) # add one column(sample names) in anno
+
+anno <- anno%>% mutate(group = paste(Treatment,Technology, sep = "_")) # add one column(different combinations) in anno
+merged_data <- left_join(dataframe_sum_of_counts,anno,by=c("index" = "sample_name"))
+ggplot(merged_data, aes(x=factor(index), y=value)) + 
+    geom_bar(stat="identity",aes(fill= group)) + 
+    labs(title="Total sum of counts per sample", x="Sample", y="Counts") +
+    theme_minimal() + 
+    theme(axis.text.x = element_text(size=4.5, angle = 45, hjust = 1, vjust = 1),
+          plot.title = element_text(face="bold", size=14),
+          axis.title.x = element_text(size=12, face="bold"),
+          axis.title.y = element_text(size=12, face="bold"))
+
+```
+
+After colored, we can find that there are two groups of sample have really high number of counts.
+
+## Normalize the data
+
+Scale the columns so that the total sum of all columns are identical
+
+```{r}
+
+total_counts <- colSums(x)
+normalized_data <- t(t(x)/total_counts*1e6)
+# use t(), because when a matrix divided by a vector. It divided by column.
+
+```
+
+Because we are not given the gene length of every gene, I would use CPM(Counts Per Million, t(data) / total_counts \* 1e6) but not TPM or FPKM.
+
+```{r}
+library(dplyr)
+normalized_sum_data <- colSums(normalized_data)
+dataframe_sum_of_normalized_counts <- data.frame(value = normalized_sum_data, index = names(normalized_sum_data))
+
+merged_normalized_data <- left_join(dataframe_sum_of_normalized_counts,anno,by=c("index" = "sample_name"))
+ggplot(merged_normalized_data, aes(x=factor(index), y=value)) + 
+    geom_bar(stat="identity",aes(fill= group)) + 
+    labs(title="Total sum of normalized counts per sample", x="Sample", y="Counts") +
+    theme_minimal() + 
+    theme(axis.text.x = element_text(size=4.5, angle = 45, hjust = 1, vjust = 1),
+          plot.title = element_text(face="bold", size=14),
+          axis.title.x = element_text(size=12, face="bold"),
+          axis.title.y = element_text(size=12, face="bold"))
+```
+
+From this plot, we know that after CPM normalized, the total sum of all columns are identical.
+
+## Transform the data to log-scale
+
+```{r}
+#working with data where you have a lot of zeros or low counts. The benefit of using #log1p over just log is that it gracefully handles zero values without causing -Inf #values.
+transformed_data <- log1p(normalized_data)
+```
+
+Use the function `log1p` to transform the data to log-scale
+
+## Visualize the distribution of the expression values
+
+Use violin plots and boxplots to visualize the distribution of the expression values. Aggregate the replicates in the same experimental group into one average sample, and plot the averaged sample. Color by experimental factors.
+
+### Violin plots
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+df_transformed_data <- as.data.frame(transformed_data)
+df_transformed_data$gene <- rownames(transformed_data)
+#chang to long version
+df_long <- df_transformed_data %>%
+  gather(sample, expression, -gene)
+merged_transformed_data <- left_join(df_long, anno, by = c("sample" = "sample_name"))
+
+ggplot(merged_transformed_data, aes(x=group, y=expression, fill=group)) + 
+  geom_violin(trim=FALSE) +
+  labs(title="Expression Distribution per Group - Violin Plot", x="Group", y="Expression") +
+  theme(axis.text.x = element_text(angle=45, hjust=1)) +
+  scale_fill_brewer(palette="Set1")
+```
+
+From this violin plot, we can find that most of the gene expression is 0 no matter which group. But DMSO_bulk and TSA_bulk have fewer genes expressed around 0, compared with others.
+
+### boxplots
+
+```{r}
+ggplot(merged_transformed_data, aes(x=group, y=expression, fill=group)) + 
+  geom_boxplot() +
+  labs(title="Expression Distribution per Group - Boxplot", x="Group", y="Expression") +
+  theme(axis.text.x = element_text(angle=45, hjust=1)) +
+  scale_fill_brewer(palette="Set1")
+```
+
+Compared with violin plots, it is hard to see the structure inside. But we still can find the median values of DMSO_bulk and TSA_bulk are higher than others.
+
+### Aggregate the replicates in the same experimental group into one average sample, and plot the averaged sample.
+
+```{r}
+
+
+averaged_data <- merged_transformed_data %>%
+  group_by(gene, group) %>%
+  summarize(average_expression = mean(expression, na.rm = TRUE))
+
+averaged_data <- averaged_data %>%
+  arrange(group) %>%
+  mutate(group = factor(group, levels = unique(group)))
+
+ggplot(averaged_data, aes(x=gene, y=average_expression, fill=group)) + 
+  geom_bar(stat="identity", position="dodge") +
+  labs(title="Average Expression per Group", x="Gene", y="Average Expression") +
+  theme(axis.text.x = element_text(size=2.5,angle=45, hjust=1)) +
+  scale_fill_brewer(palette="Set1")
+
+```
+
+It is hard to see the difference of gene expression between different experimental group. It's so hard to separate every gene name at X-axis.
+
+## Most variable genes
+
+Identify the 500 most variable genes (with largest variance across samples) and continue working with those
+
+```{r}
+library(dplyr)
+
+# Compute variance for each gene across samples
+variances <- apply(df_transformed_data[,-which(names(df_transformed_data) == "gene")], 1, var)
+
+# Rank genes by variance and select the top 500
+top_genes <- data.frame(
+    gene = df_transformed_data$gene,
+    variance = variances
+) %>%
+    arrange(desc(variance))%>%
+    head(500)
+
+top_500_genes_data <- df_transformed_data[top_genes$gene, ]
+
+```
+
+## Sample correlations
+
+Compute and visualize the sample-to-sample correlations
+
+```{r}
+#the use of the t function to transpose the dataset so that we're calculating correlations of genes between samples.
+correlation_matrix <- cor(t(top_500_genes_data[,-which(names(df_transformed_data) == "gene")]))
+library(pheatmap)
+# computing cluster
+row_hclust <- hclust(as.dist(1 - correlation_matrix), method = "complete")
+col_hclust <- hclust(as.dist(1 - correlation_matrix), method = "complete")
+
+# heatmap
+pheatmap(correlation_matrix, 
+         main = "Sample-to-Sample Correlations", 
+         Rowv = as.dendrogram(row_hclust),
+         Colv = as.dendrogram(col_hclust),
+         show_rownames = TRUE, 
+         fontsize_row = 1,
+         show_colnames = TRUE,
+         fontsize_col=1)
+
+```
+
+Using pheatmap to visualize the sample-to-sample correlations. 1 - correlation_matrix: Here, we subtract each correlation value from 1. The reason for this is that correlation values range from -1 to 1. When two samples are positively correlated, their correlation is 1, and their distance should be 0 (because they are "closest"). On the contrary, we expect the distance to be larger when two samples are negatively correlated or uncorrelated. Therefore, by subtracting the correlation from 1, we convert the correlation value into a distance metric that ranges from 0 (minimum distance) to 2 (maximum distance).
+
+Of course, we can use other method to visualize the correlations. for example:
+
+```{r}
+# library(corrplot)
+# corrplot(correlation_matrix, method="circle",cl.cex=0.1)  
+```
+
+## Clustering
+
+Compute and visualize a hierarchical clustering of the samples, use the method `hclust`
+
+```{r}
+dist_matrix <- as.dist(1 - cor(t(top_500_genes_data[,-which(names(df_transformed_data) == "gene")])))
+hc <- hclust(dist_matrix, method="complete")
+plot(hc, main="Hierarchical Clustering of Samples", xlab="Samples", ylab="Height",cex=0.2)
+```
+
+Here the hierarchical clustering was performed using the complete linkage method, and a dendrogram was drawn to visualize the clustering of the samples.Looking at the dendrogram can tell you which samples are more similar in expression patterns.
+
+## Heatmap
+
+Use the package `pheatmap` to generate a heatmap of the expression data.
+
+```{r}
+# heatmap
+pheatmap(correlation_matrix, 
+         main = "Sample-to-Sample Correlations", 
+         Rowv = as.dendrogram(row_hclust),
+         Colv = as.dendrogram(col_hclust),
+         show_rownames = TRUE, 
+         fontsize_row = 1,
+         show_colnames = TRUE,
+         fontsize_col=1)
+```
+
+We can see the structure of genes sample-to-sample correlation. Also, we can have a clustering tree on X axes.
